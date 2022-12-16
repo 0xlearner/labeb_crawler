@@ -11,7 +11,7 @@ class LuluBahrain(scrapy.Spider):
 
     custom_settings = {
         "LOG_FILE": f"{name}.log",
-        "IMAGES_STORE": "lulu-bahrian-images",
+        "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.LuluBahrainImagesPipeline": 1,
             "labeb.pipelines.LuluBahrainCsvPipeline": 300,
@@ -182,21 +182,21 @@ class LuluBahrain(scrapy.Spider):
             .css("img::attr(src)")
             .extract()
         )
-        raw_encoded_images = []
-        for img in raw_images:
-            resp = requests.get(
-                "https://www.luluhypermarket.com" + img, headers=self.headers
-            )
-            img_uri = (
-                "data:"
-                + resp.headers["Content-Type"]
-                + ";"
-                + "base64,"
-                + base64.b64encode(resp.content).decode("utf-8")
-            )
-            raw_encoded_images.append(
-                img_uri.replace("data:image/webp;base64", "data:image/jpeg;base64")
-            )
+        # raw_encoded_images = []
+        # for img in raw_images:
+        #     resp = requests.get(
+        #         "https://www.luluhypermarket.com" + img, headers=self.headers
+        #     )
+        #     img_uri = (
+        #         "data:"
+        #         + resp.headers["Content-Type"]
+        #         + ";"
+        #         + "base64,"
+        #         + base64.b64encode(resp.content).decode("utf-8")
+        #     )
+        #     raw_encoded_images.append(
+        #         img_uri.replace("data:image/webp;base64", "data:image/jpeg;base64")
+        #     )
         clean_image_url = [response.urljoin(img_url) for img_url in raw_images]
         item["image_urls"] = clean_image_url
         try:
@@ -267,5 +267,5 @@ class LuluBahrain(scrapy.Spider):
             item["instock"] = "labeb"
         else:
             item["instock"] = ""
-        item["encoded_images"] = raw_encoded_images
+        # item["encoded_images"] = raw_encoded_images
         yield item

@@ -5,6 +5,8 @@ import pandas as pd
 import ast
 import logging
 from glob import glob
+import os
+import base64
 
 logging.basicConfig(
     filename="post_script.log", format="%(asctime)s %(message)s", filemode="w"
@@ -18,9 +20,37 @@ csv.field_size_limit(100000000)
 headers = {"Accept": "*/*", "Content-Type": "application/json"}
 
 
+def get_directory(store_id):
+    for dirpath, dirnames, files in os.walk(os.getcwd()):
+        for folder in dirnames:
+            if folder.startswith(store_id) and "images" in folder:
+                print(folder)
+                return folder
+
+
+def encoded_images(dir, catalog_uuid):
+    for d in os.listdir(dir):
+        flist = list()
+        cat_uuid = d.split("_")[-1]
+        if cat_uuid == catalog_uuid:
+            print(catalog_uuid)
+            path = os.path.join(dir, d)
+            for file in os.listdir(os.path.join(path)):
+                print(file)
+                with open(os.path.join(path, file), "rb") as image_file:
+                    encoded_str = base64.b64encode(image_file.read())
+                    li_encoded_str = "data:image/jpeg;base64," + encoded_str.decode(
+                        "ascii"
+                    )
+                    flist.append(li_encoded_str)
+
+            return flist
+
+
 async def post_func(session, file, store_id):
+    directory = get_directory(store_id)
     data = {}
-    with open(file, "r") as f_in:
+    with open(file, "r", encoding="utf8") as f_in:
         reader = csv.DictReader(f_in)
         for row in reader:
             data.setdefault((row["LabebStoreId"], row["catalog_uuid"]), []).append(row)
@@ -45,9 +75,15 @@ async def post_func(session, file, store_id):
                     "delivery": v[0]["delivery"],
                     "discount": v[0]["discount"],
                     "instock": v[0]["instock"],
-                    "images": ast.literal_eval(v[0]["encoded_images"]),
                 }
             }
+
+            catalouge = v[0]["catalog_uuid"]
+            imgs = encoded_images(directory, catalouge)
+
+            payload["row"]["images"] = imgs
+
+            print(f"""row: {len(payload["row"]["images"])}""")
 
             response = await session.post(
                 f"http://crawlerapi.labeb.com/api/PCCrawler/Crawl?StoreId={store_id}",
@@ -76,7 +112,6 @@ async def post_func(session, file, store_id):
                     "delivery": v[0]["delivery"],
                     "discount": v[0]["discount"],
                     "instock": v[0]["instock"],
-                    "images": ast.literal_eval(v[0]["encoded_images"]),
                 },
                 "nextRow": {
                     "LabebStoreId": v[1]["LabebStoreId"],
@@ -96,10 +131,19 @@ async def post_func(session, file, store_id):
                     "delivery": v[1]["delivery"],
                     "discount": v[1]["discount"],
                     "instock": v[1]["instock"],
-                    "images": ast.literal_eval(v[1]["encoded_images"]),
                 },
             }
             # logger.debug(payload)
+            catalouge_v0 = v[0]["catalog_uuid"]
+            catalouge_v1 = v[1]["catalog_uuid"]
+            imgs_0 = encoded_images(directory, catalouge_v0)
+            imgs_1 = encoded_images(directory, catalouge_v1)
+
+            payload["row"]["images"] = imgs_0
+            payload["nextRow"]["images"] = imgs_1
+
+            print(f"""row: {len(payload["row"]["images"])}""")
+            print(f"""nextRow: {len(payload["nextRow"]["images"])}""")
             response = await session.post(
                 f"http://crawlerapi.labeb.com/api/PCCrawler/Crawl?StoreId={store_id}",
                 json=payload,
@@ -112,7 +156,7 @@ async def post_func(session, file, store_id):
         logger.info("-" * 80)
 
 
-async def main():
+async def post_main():
     try:
         async with aiohttp.ClientSession(headers=headers) as session:
             logging.info(f"---starting new---")
@@ -131,4 +175,4 @@ async def main():
 
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    loop.run_until_complete(post_main())

@@ -756,7 +756,7 @@ class CarrefourJordanExcelPipeline(object):
             "%s-items-dropped-headers.csv" % spider.name,
         )
         df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
+        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
         sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
         output_path = "%s-items-final.xlsx" % spider.name
         if not os.path.isfile(output_path):
