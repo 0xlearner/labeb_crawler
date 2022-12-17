@@ -1,17 +1,13 @@
 import scrapy
 import json
 from urllib.parse import urlencode, unquote
-import os
-import requests
-import base64
 
 
 class LuluKsa(scrapy.Spider):
     name = "5667_lulu_ksa"
 
     custom_settings = {
-        "LOG_FILE": f"{name}.log",
-        "IMAGES_STORE": "lulu-ksa-images",
+        "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.LuluKsaImagesPipeline": 1,
             "labeb.pipelines.LuluKsaCsvPipeline": 300,
@@ -182,21 +178,7 @@ class LuluKsa(scrapy.Spider):
             .css("img::attr(src)")
             .extract()
         )
-        raw_encoded_images = []
-        for img in raw_images:
-            resp = requests.get(
-                "https://www.luluhypermarket.com" + img, headers=self.headers
-            )
-            img_uri = (
-                "data:"
-                + resp.headers["Content-Type"]
-                + ";"
-                + "base64,"
-                + base64.b64encode(resp.content).decode("utf-8")
-            )
-            raw_encoded_images.append(
-                img_uri.replace("data:image/webp;base64", "data:image/jpeg;base64")
-            )
+
         clean_image_url = [response.urljoin(img_url) for img_url in raw_images]
         item["image_urls"] = clean_image_url
         try:
@@ -267,5 +249,5 @@ class LuluKsa(scrapy.Spider):
             item["instock"] = "labeb"
         else:
             item["instock"] = ""
-        item["encoded_images"] = raw_encoded_images
+
         yield item

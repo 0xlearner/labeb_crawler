@@ -1,16 +1,13 @@
 import scrapy
 import json
 from urllib.parse import urlencode, unquote
-import base64
-import requests
 
 
 class CarrefourKSA(scrapy.Spider):
     name = "5638_carrefour_ksa"
 
     custom_settings = {
-        "LOG_FILE": f"{name}.log",
-        "IMAGES_STORE": "carrefour-ksa-images",
+        "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.CarrefourKsaImagesPipeline": 1,
             "labeb.pipelines.CarrefourKsaCsvPipeline": 300,
@@ -19,18 +16,20 @@ class CarrefourKSA(scrapy.Spider):
     }
 
     headers = {
-        "authority": "www.carrefourksa.com",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        "accept-language": "en,ru;q=0.9",
-        "sec-ch-ua": '" Not A;Brand";v="99", "Chromium";v="100", "Yandex";v="22"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Linux"',
-        "sec-fetch-dest": "document",
-        "sec-fetch-mode": "navigate",
-        "sec-fetch-site": "none",
-        "sec-fetch-user": "?1",
-        "upgrade-insecure-requests": "1",
-        "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.143 YaBrowser/22.5.0.1879 (beta) Yowser/2.5 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        # 'Accept-Encoding': 'gzip, deflate, br',
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "cross-site",
+        "Sec-GPC": "1",
+        "Connection": "keep-alive",
+        # 'Cookie': 'cart_api=v2; app_version=v4; page_type=categorySearch; cart_api=v2; cart_api=v2; _abck=0435527AA58124F09B72E596F8544495~-1~YAAQRaMAF/4PYBaFAQAAavG6HgkU801N10JBy3UReNQSbUqUC0H8Ybdu74xNL6N8KLl9Xov2GYoBI6S04mcmxHVSIoRFqSF5tqt0I9CwgpWggZ+6xve1drIUyYkjmS1c62cyaGQf1i/FZVEENT/uthCJPreRiDSTIDrvIGFiW0l8aoZqhGf9n6hu2LNEmzSOCtGj21eNH4pEbhiBDP5NOG5Q9AZwrNwCM/8oz7XFX4Nw1zrYzvXbpx9tVBfr+Gim8CeXxVjJcqdRT0qe4jpAhYUjYgwwNGwovR4tx9+/enX2tOCBVyaGPwQ5AdUeNWitgEY3axaHWWfAQjcjpO9tB1kZyibPM3j+YSBaG8C4HPyTVAucjfljiXnJ72aoxoLsniP47rHKhKjGeMN+sj7eeg==~-1~-1~-1; storeInfo=mafsau|en|SAR; maf-session-id=db8b2be0-15d3-4aef-9b70-13b01b193939; mafsau-preferred-delivery-area=Granada - Riyadh; prevAreaCode=Granada - Riyadh; ak_bmsc=39EC4BA2231740F64190B246CA1E09C9~000000000000000000000000000000~YAAQRaMAFzYQYBaFAQAAAfm6HhIweJNARyeyucdjgQZ2EMHOxAnGziZBH2wnzl6zQ0KtqXLdIxPq3DrJ5z2g5k8+uXLUBB27waEhjk9JA4JgYctUT74lK3jA5Xmo5KR8mG8f411GcgluaxkVxhoybfa52eV1Uo+NkLJPcmemFL1fdhNDhSwZZIW3MMBVeubHv14s//WaU7cAcn+gNTc3WI5P1zSyfWePqvC3WXbNwANZDZVvw4WRl8xglHPW+H8oX5hoNV6UX/eQTLQdE3ht6mva5XHTW8AxErCN3zEKXtASNPazTUzbqxOlZuqeai9xHvNEQc8r1BiXMWgUBGf+NDx/19GtsB195Ii3YseQ+IiAtQ0ZAX3THrtczWNynhTmpItD8IR8oCuToyL7hjyUAqfiHrpOXOfxcPvVPuMV1hQzbBtE8/5heTkMWYZs3gvJPgcQHhtOWIC0MTGjylCvIcDiC0jFGyqhdYiUJpcKwvePUyZaY48xNuJO4AWuP+/oAYPlXQtEzVI5lUv/b7WgKsq7Mtbp2Wx5IiscYAFoW5UIm0QUO7w=; bm_sz=C56BBFB2F3D957FE59818E6720AB9EFE~YAAQRaMAFwEQYBaFAQAAavG6HhJOwsuhNF0hTOFVmAmsbTQq7I6zeF2yd9WGwzUvBg3NaDndUagNh5oC3B91a26Mps47vuhwI69PaOcshoubdO2JP2uIG/y6T8ECVIYXqRdk+Hs/N+8AYL4UPm5fG71PKZ7WRWslN1qUu8Wbqg0C4ODncSwF78Hov8hC9mJECihKVwcU7RyIUED6YKWw8Cvf5+Wsw5ZUEZe7cPFoqJcbNVCzhuvOIE/9tIvXP5a4HqUKxR2PUN5+cA2FDDYxuzs0tEsWEpc+BmT4ofHfdub09N8qJrqcNaE=~3616836~4539442; AKA_A2=A',
+        # Requests doesn't support trailers
+        # 'TE': 'trailers',
+        "If-None-Match": '"40aaa-Cd++C758T+m5S6RM0p6ux3Z3oCs"',
     }
 
     def start_requests(self):
@@ -156,19 +155,6 @@ class CarrefourKSA(scrapy.Spider):
             except:
                 item["description"] = ""
         raw_images = response.css("div.css-1c2pck7 ::attr(src)").getall()
-        raw_encoded_images = []
-        for img in raw_images:
-            resp = requests.get(img, headers=self.headers)
-            img_uri = (
-                "data:"
-                + resp.headers["Content-Type"]
-                + ";"
-                + "base64,"
-                + base64.b64encode(resp.content).decode("utf-8")
-            )
-            raw_encoded_images.append(
-                img_uri.replace("data:image/webp;base64", "data:image/jpeg;base64")
-            )
 
         clean_image_url = []
 
@@ -211,30 +197,6 @@ class CarrefourKSA(scrapy.Spider):
         except:
             item["properties"] = "{}"
 
-        # keys = response.css("div.css-pi51ey::text").getall()
-        # values = response.css("h3.css-1ps12pz::text").getall()
-        # if keys and values:
-        #     properties = {keys[i]: values[i] for i in range(len(keys))}
-        #     raw_properties = json.dumps(properties, ensure_ascii=False).encode("utf-8")
-        #     item["properties"] = raw_properties.decode()
-        # else:
-        #     try:
-        #         features = json_data["props"]["initialProps"]["pageProps"][
-        #             "initialData"
-        #         ]["products"][0]["classificationAttributes"][0]["features"]
-        #         features_dict = dict(next(iter(d.items())) for d in features)
-        #         try:
-        #             features_dict["ingredients"] = item_attr["ingredients"]
-        #             features_dict["safetyWarnings"] = item_attr["safetyWarnings"]
-        #             features_dict["storageConditions"] = item_attr["storageConditions"]
-        #         except KeyError:
-        #             pass
-        #         raw_features = json.dumps(features_dict, ensure_ascii=False).encode(
-        #             "utf-8"
-        #         )
-        #         item["properties"] = raw_features.decode()
-        #     except:
-        #         item["properties"] = "{}"
         try:
             item["price"] = response.css("h2.css-1i90gmp::text").getall()[2]
         except:
@@ -245,7 +207,6 @@ class CarrefourKSA(scrapy.Spider):
             ).getall()[2]
         except:
             item["price_before_discount"] = ""
-        # item["externallink"] = link_url.split("=")[2]
         item["externallink"] = link_url
         item["catalog_uuid"] = item["externallink"].split("/")[-1]
         item["path"] = f'catalouge_{item["catalog_uuid"]}/'
@@ -261,5 +222,5 @@ class CarrefourKSA(scrapy.Spider):
             item["instock"] = response.css("div.css-g4iap9::text").extract()[1]
         except:
             item["instock"] = ""
-        item["encoded_images"] = raw_encoded_images
+
         yield item

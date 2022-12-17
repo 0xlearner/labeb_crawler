@@ -40,8 +40,10 @@ def main():
         # for my_spider, spider_name in zip(classes, spiders):
         #     print(f"Running spider: {spider_name}")
         #     yield runner.crawl(my_spider)
-
-        yield runner.crawl(CarrefourJordan)
+        print("Running spider CarrefourUAE")
+        yield runner.crawl(CarrefourUAE)
+        print("Running spider LuluUae")
+        yield runner.crawl(LuluUae)
         reactor.stop()
 
     crawl()

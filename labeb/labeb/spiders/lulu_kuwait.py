@@ -1,16 +1,13 @@
 import scrapy
 import json
 from urllib.parse import urlencode, unquote
-import requests
-import base64
 
 
 class LuluKuwait(scrapy.Spider):
     name = "5845_lulu_kuwait"
 
     custom_settings = {
-        "LOG_FILE": f"{name}.log",
-        "IMAGES_STORE": "lulu-kuwait-images",
+        "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.LuluKuwaitImagesPipeline": 1,
             "labeb.pipelines.LuluKuwaitCsvPipeline": 300,
@@ -77,26 +74,26 @@ class LuluKuwait(scrapy.Spider):
             "HY00214762",
             "HY00215111",
             "HY00214730",
-            # "HY00214839",
-            # "HY00215333",
-            # "HY00214731",
-            # "HY00214728",
-            # "HY00214740",
-            # "HY00214852",
-            # "HY00214834",
-            # "HY00214832",
-            # "HY00216080",
-            # "HY00217325",
-            # "HY00214884",
-            # "HY00214870",
-            # "HY00215162",
-            # "HY00215180",
-            # "HY00216077",
-            # "HY00215200",
-            # "HY00217005",
-            # "HY002148010",
-            # "HY00217009",
-            # "HY00216375",
+            "HY00214839",
+            "HY00215333",
+            "HY00214731",
+            "HY00214728",
+            "HY00214740",
+            "HY00214852",
+            "HY00214834",
+            "HY00214832",
+            "HY00216080",
+            "HY00217325",
+            "HY00214884",
+            "HY00214870",
+            "HY00215162",
+            "HY00215180",
+            "HY00216077",
+            "HY00215200",
+            "HY00217005",
+            "HY002148010",
+            "HY00217009",
+            "HY00216375",
         ]
 
         for category in categories:
@@ -181,21 +178,7 @@ class LuluKuwait(scrapy.Spider):
             .css("img::attr(src)")
             .extract()
         )
-        raw_encoded_images = []
-        for img in raw_images:
-            resp = requests.get(
-                "https://www.luluhypermarket.com" + img, headers=self.headers
-            )
-            img_uri = (
-                "data:"
-                + resp.headers["Content-Type"]
-                + ";"
-                + "base64,"
-                + base64.b64encode(resp.content).decode("utf-8")
-            )
-            raw_encoded_images.append(
-                img_uri.replace("data:image/webp;base64", "data:image/jpeg;base64")
-            )
+
         clean_image_url = [response.urljoin(img_url) for img_url in raw_images]
         item["image_urls"] = clean_image_url
         try:
@@ -266,5 +249,5 @@ class LuluKuwait(scrapy.Spider):
             item["instock"] = "labeb"
         else:
             item["instock"] = ""
-        item["encoded_images"] = raw_encoded_images
+
         yield item

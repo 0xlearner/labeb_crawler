@@ -1,16 +1,16 @@
 import asyncio
 import aiohttp
 import csv
-import pandas as pd
-import ast
 import logging
 from glob import glob
 import os
 import base64
 
-logging.basicConfig(
-    filename="post_script.log", format="%(asctime)s %(message)s", filemode="w"
-)
+# logging.basicConfig(
+#     filename="post_script.log",
+#     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+#     filemode="w",
+# )
 
 logger = logging.getLogger()
 logger.setLevel(logging.DEBUG)
@@ -29,22 +29,25 @@ def get_directory(store_id):
 
 
 def encoded_images(dir, catalog_uuid):
-    for d in os.listdir(dir):
-        flist = list()
-        cat_uuid = d.split("_")[-1]
-        if cat_uuid == catalog_uuid:
-            print(catalog_uuid)
-            path = os.path.join(dir, d)
-            for file in os.listdir(os.path.join(path)):
-                print(file)
-                with open(os.path.join(path, file), "rb") as image_file:
-                    encoded_str = base64.b64encode(image_file.read())
-                    li_encoded_str = "data:image/jpeg;base64," + encoded_str.decode(
-                        "ascii"
-                    )
-                    flist.append(li_encoded_str)
+    if len(dir) > 0:
+        for d in os.listdir(dir):
+            flist = list()
+            cat_uuid = d.split("_")[-1]
+            if cat_uuid == catalog_uuid:
+                print(catalog_uuid)
+                path = os.path.join(dir, d)
+                for file in os.listdir(os.path.join(path)):
+                    print(file)
+                    with open(os.path.join(path, file), "rb") as image_file:
+                        encoded_str = base64.b64encode(image_file.read())
+                        li_encoded_str = "data:image/jpeg;base64," + encoded_str.decode(
+                            "ascii"
+                        )
+                        flist.append(li_encoded_str)
 
-            return flist
+                return flist
+    else:
+        logger.error(f"{dir} is Empty.")
 
 
 async def post_func(session, file, store_id):
@@ -82,8 +85,10 @@ async def post_func(session, file, store_id):
             imgs = encoded_images(directory, catalouge)
 
             payload["row"]["images"] = imgs
-
-            print(f"""row: {len(payload["row"]["images"])}""")
+            try:
+                print(f"""row: {len(payload["row"]["images"])}""")
+            except Exception as e:
+                logger.error(e)
 
             response = await session.post(
                 f"http://crawlerapi.labeb.com/api/PCCrawler/Crawl?StoreId={store_id}",
@@ -141,9 +146,13 @@ async def post_func(session, file, store_id):
 
             payload["row"]["images"] = imgs_0
             payload["nextRow"]["images"] = imgs_1
-
-            print(f"""row: {len(payload["row"]["images"])}""")
-            print(f"""nextRow: {len(payload["nextRow"]["images"])}""")
+            try:
+                print(f"""row: {len(payload["row"]["images"])}""")
+                print(f"""nextRow: {len(payload["nextRow"]["images"])}""")
+            except Exception as e:
+                logger.error(e)
+            # print(f"""row: {len(payload["row"]["images"])}""")
+            # print(f"""nextRow: {len(payload["nextRow"]["images"])}""")
             response = await session.post(
                 f"http://crawlerapi.labeb.com/api/PCCrawler/Crawl?StoreId={store_id}",
                 json=payload,

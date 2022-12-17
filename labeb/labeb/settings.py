@@ -17,19 +17,26 @@ from logging.handlers import RotatingFileHandler
 
 from scrapy.utils.log import configure_logging
 
-# LOG_ENABLED = False
+from dotenv import load_dotenv, find_dotenv
+import os
+
+load_dotenv(find_dotenv())
+
+PACKETSTREAM_PROXY = os.getenv("PACKETSTREAM_PROXY")
+
+LOG_ENABLED = False
 # Disable default Scrapy log settings.
-# configure_logging(install_root_handler=False)
+configure_logging(install_root_handler=False)
 
 # Define your logging settings.
-# log_file = "LABEB_CRAWLER_logs.log"
-# root_logger = logging.getLogger()
-# root_logger.setLevel(logging.DEBUG)
-# formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-# file_log = logging.FileHandler(log_file)
-# root_logger.setLevel(logging.DEBUG)
-# file_log.setFormatter(formatter)
-# root_logger.addHandler(file_log)
+log_file = "labeb_crawler_logs.log"
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s")
+file_log = logging.FileHandler(log_file, mode="w")
+root_logger.setLevel(logging.DEBUG)
+file_log.setFormatter(formatter)
+root_logger.addHandler(file_log)
 
 # STATS_ENABLED = True
 # STATS_DUMP = True
@@ -72,10 +79,10 @@ CONCURRENT_REQUESTS = 5
 
 # Enable or disable downloader middlewares
 # See https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
-# DOWNLOADER_MIDDLEWARES = {
-#     "labeb.middlewares.ProxyMiddleware": 350,
-#     #    'labeb.middlewares.LabebDownloaderMiddleware': 543,
-# }
+DOWNLOADER_MIDDLEWARES = {
+    "labeb.middlewares.ProxyMiddleware": 250,
+    #    'labeb.middlewares.LabebDownloaderMiddleware': 543,
+}
 
 # Enable or disable extensions
 # See https://docs.scrapy.org/en/latest/topics/extensions.html

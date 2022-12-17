@@ -10,10 +10,12 @@ from scrapy.http import Request
 from scrapy import signals
 from urllib.parse import unquote
 import os
+import logging
 from scrapy.exporters import CsvItemExporter
 import pandas as pd
 import csv
 from scrapy.pipelines.images import ImagesPipeline
+from scrapy.utils.project import get_project_settings
 
 
 def dedup_csv_header(fname, fname_new):
@@ -104,27 +106,30 @@ class CarrefourKsaCsvPipeline(object):
                     seen.add(line)
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class CarrefourKsaExcelPipeline(object):
@@ -160,31 +165,39 @@ class CarrefourKsaExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class CarrefourUaeImagesPipeline(ImagesPipeline):
@@ -253,27 +266,30 @@ class CarrefourUaeCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class CarrefourUaeExcelPipeline(object):
@@ -309,31 +325,39 @@ class CarrefourUaeExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class CarrefourQatarImagesPipeline(ImagesPipeline):
@@ -402,27 +426,30 @@ class CarrefourQatarCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class CarrefourQatarExcelPipeline(object):
@@ -458,31 +485,39 @@ class CarrefourQatarExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class CarrefourKuwaitImagePipeline(ImagesPipeline):
@@ -551,27 +586,30 @@ class CarrefourKuwaitCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class CarrefourKuwaitExcelPipeline(object):
@@ -607,31 +645,39 @@ class CarrefourKuwaitExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class CarrefourJordanImagesPipeline(ImagesPipeline):
@@ -700,26 +746,30 @@ class CarrefourJordanCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class CarrefourJordanExcelPipeline(object):
@@ -755,31 +805,39 @@ class CarrefourJordanExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class LuluUaeImagesPipeline(ImagesPipeline):
@@ -848,26 +906,30 @@ class LuluUaeCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluUaeExcelPipeline(object):
@@ -903,31 +965,39 @@ class LuluUaeExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class LuluKsaImagesPipeline(ImagesPipeline):
@@ -996,27 +1066,30 @@ class LuluKsaCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluKsaExcelPipeline(object):
@@ -1052,31 +1125,39 @@ class LuluKsaExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class LuluKuwaitImagesPipeline(ImagesPipeline):
@@ -1145,27 +1226,30 @@ class LuluKuwaitCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluKuwaitExcelPipeline(object):
@@ -1201,31 +1285,39 @@ class LuluKuwaitExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class LuluOmanImagesPipeline(ImagesPipeline):
@@ -1294,27 +1386,30 @@ class LuluOmanCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluOmanExcelPipeline(object):
@@ -1350,31 +1445,39 @@ class LuluOmanExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class LuluQatarImagesPipeline(ImagesPipeline):
@@ -1443,27 +1546,30 @@ class LuluQatarCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluQatarExcelPipeline(object):
@@ -1499,31 +1605,39 @@ class LuluQatarExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class LuluBahrainImagesPipeline(ImagesPipeline):
@@ -1592,27 +1706,30 @@ class LuluBahrainCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluBahrainExcelPipeline(object):
@@ -1648,31 +1765,39 @@ class LuluBahrainExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
 
 
 class LuluEgyptImagesPipeline(ImagesPipeline):
@@ -1741,27 +1866,30 @@ class LuluEgyptCsvPipeline(object):
                     out_file.write(line)
         os.remove("%s_items.csv" % spider.name)
 
-        df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-        drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-        sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-        output_path = "%s_items_final.csv" % spider.name
-        if not os.path.isfile(output_path):
-            sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-        else:
-            sorted_df.to_csv(
-                "%s_items_final.csv" % spider.name,
-                mode="a",
-                encoding="utf-8-sig",
-                header=False,
-                index=False,
-            )
+        try:
+            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
+            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
+            output_path = "%s_items_final.csv" % spider.name
+            if not os.path.isfile(output_path):
+                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
+            else:
+                sorted_df.to_csv(
+                    "%s_items_final.csv" % spider.name,
+                    mode="a",
+                    encoding="utf-8-sig",
+                    header=False,
+                    index=False,
+                )
+            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
+            final_data = dedup.drop_duplicates()
+            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
 
-        dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-        final_data = dedup.drop_duplicates()
-        final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-        os.remove("%s_items_raw.csv" % spider.name)
+            os.remove("%s_items_raw.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluEgyptExcelPipeline(object):
@@ -1797,28 +1925,36 @@ class LuluEgyptExcelPipeline(object):
             "%s_items_excel.csv" % spider.name,
             "%s-items-dropped-headers.csv" % spider.name,
         )
-        df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
-        drop_cols = df.drop(["image_urls", "path", "images", "encoded_images"], axis=1)
-        sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
-        output_path = "%s-items-final.xlsx" % spider.name
-        if not os.path.isfile(output_path):
-            with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
+        try:
+            df = pd.read_csv("%s-items-dropped-headers.csv" % spider.name, skiprows=0)
+            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
+            sorted_df = drop_cols.sort_values(by=["catalog_uuid"])
+            output_path = "%s-items-final.xlsx" % spider.name
+            if not os.path.isfile(output_path):
+                with pd.ExcelWriter(output_path, engine="xlsxwriter") as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            else:
+                with pd.ExcelWriter(
+                    output_path,
+                    mode="a",
+                    engine="xlsxwriter",
+                    if_sheet_exists="replace",
+                ) as writer:
+                    sorted_df.to_excel(
+                        writer, sheet_name="Sheet1", header=True, index=False
+                    )
+            drop_dup = pd.read_excel(output_path)
+            final_data = drop_dup.drop_duplicates()
+            with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
+                final_data.to_excel(
+                    pd_writer, sheet_name="Sheet1", header=True, index=False
                 )
-        else:
-            with pd.ExcelWriter(
-                output_path, mode="a", engine="xlsxwriter", if_sheet_exists="replace"
-            ) as writer:
-                sorted_df.to_excel(
-                    writer, sheet_name="Sheet1", header=True, index=False
-                )
-        drop_dup = pd.read_excel(output_path)
-        final_data = drop_dup.drop_duplicates()
-        with pd.ExcelWriter(output_path, engine="xlsxwriter") as pd_writer:
-            final_data.to_excel(
-                pd_writer, sheet_name="Sheet1", header=True, index=False
-            )
 
-        os.remove("%s-items-dropped-headers.csv" % spider.name)
-        os.remove("%s_items_excel.csv" % spider.name)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)
+        except pd.errors.EmptyDataError:
+            spider.log("Excel pipeline No columns to parse from file", logging.ERROR)
+            os.remove("%s-items-dropped-headers.csv" % spider.name)
+            os.remove("%s_items_excel.csv" % spider.name)

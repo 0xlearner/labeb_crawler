@@ -9,8 +9,7 @@ class CarrefourKuwait(scrapy.Spider):
     name = "6003_carrefour_kuwait"
 
     custom_settings = {
-        "LOG_FILE": f"{name}.log",
-        "IMAGES_STORE": "carrefour-kuwait-images",
+        "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.CarrefourKuwaitImagePipeline": 1,
             "labeb.pipelines.CarrefourKuwaitCsvPipeline": 300,
@@ -157,19 +156,6 @@ class CarrefourKuwait(scrapy.Spider):
                 except:
                     item["description"] = ""
             raw_images = response.css("div.css-1c2pck7 ::attr(src)").getall()
-            raw_encoded_images = []
-            for img in raw_images:
-                resp = requests.get(img, headers=self.headers)
-                img_uri = (
-                    "data:"
-                    + resp.headers["Content-Type"]
-                    + ";"
-                    + "base64,"
-                    + base64.b64encode(resp.content).decode("utf-8")
-                )
-                raw_encoded_images.append(
-                    img_uri.replace("data:image/webp;base64", "data:image/jpeg;base64")
-                )
 
             clean_image_url = []
 
@@ -213,34 +199,6 @@ class CarrefourKuwait(scrapy.Spider):
             except:
                 item["properties"] = "{}"
 
-            # keys = response.css("div.css-pi51ey::text").getall()
-            # values = response.css("h3.css-1ps12pz::text").getall()
-            # if keys and values:
-            #     properties = {keys[i]: values[i] for i in range(len(keys))}
-            #     raw_properties = json.dumps(properties, ensure_ascii=False).encode(
-            #         "utf-8"
-            #     )
-            #     item["properties"] = raw_properties.decode()
-            # else:
-            #     try:
-            #         features = json_data["props"]["initialProps"]["pageProps"][
-            #             "initialData"
-            #         ]["products"][0]["classificationAttributes"][0]["features"]
-            #         features_dict = dict(next(iter(d.items())) for d in features)
-            #         try:
-            #             features_dict["ingredients"] = item_attr["ingredients"]
-            #             features_dict["safetyWarnings"] = item_attr["safetyWarnings"]
-            #             features_dict["storageConditions"] = item_attr[
-            #                 "storageConditions"
-            #             ]
-            #         except KeyError:
-            #             pass
-            #         raw_features = json.dumps(features_dict, ensure_ascii=False).encode(
-            #             "utf-8"
-            #         )
-            #         item["properties"] = raw_features.decode()
-            #     except:
-            #         item["properties"] = "{}"
             try:
                 item["price"] = response.css("h2.css-1i90gmp::text").getall()[2]
             except:
@@ -266,7 +224,7 @@ class CarrefourKuwait(scrapy.Spider):
                 item["instock"] = response.css("div.css-g4iap9::text").extract()[1]
             except:
                 item["instock"] = ""
-            item["encoded_images"] = raw_encoded_images
+
             yield item
         except:
             pass
