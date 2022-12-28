@@ -11,7 +11,7 @@ class CarrefourJordan(scrapy.Spider):
         "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.CarrefourJordanImagesPipeline": 1,
-            "labeb.pipelines.CarrefourJordanCsvPipeline": 300,
+            "labeb.pipelines.LabebCsvPipeline": 300,
             "labeb.pipelines.CarrefourJordanExcelPipeline": 345,
         },
     }

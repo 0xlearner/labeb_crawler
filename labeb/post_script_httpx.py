@@ -1,5 +1,5 @@
-import asyncio
-import aiohttp
+import httpx
+import pandas as pd
 import csv
 import logging
 from glob import glob
@@ -48,12 +48,13 @@ def encoded_images(dir, catalog_uuid):
             return flist
 
 
-async def post_func(session, file, store_id):
-    directory = get_directory(store_id)
+def post_func(client: httpx.Client, file):
+
     data = {}
-    with open(file, "r", encoding="utf8") as f_in:
-        reader = csv.DictReader(f_in)
-        for row in reader:
+    for chunk in pd.read_csv(file, chunksize=5):
+        df = chunk.fillna("").astype(str)
+        dict_df = df.to_dict("records")
+        for row in dict_df:
             data.setdefault((row["LabebStoreId"], row["catalog_uuid"]), []).append(row)
     for payload_no, v in enumerate(data.values(), 1):
         if len(v) == 1:
@@ -78,7 +79,7 @@ async def post_func(session, file, store_id):
                     "instock": v[0]["instock"],
                 }
             }
-
+            directory = get_directory(payload["row"]["LabebStoreId"])
             catalouge = v[0]["catalog_uuid"]
             imgs = encoded_images(directory, catalouge)
 
@@ -88,12 +89,12 @@ async def post_func(session, file, store_id):
             except Exception as e:
                 logger.error(e)
 
-            response = await session.post(
-                f"http://crawlerapi.labeb.com/api/PCCrawler/Crawl?StoreId={store_id}",
+            response = client.post(
+                f"""http://crawlerapi.labeb.com/api/PCCrawler/Crawl?StoreId={v[0]["LabebStoreId"]}""",
                 json=payload,
             )
             logger.debug(f"""row: {payload["row"]["externallink"]}""")
-            logger.info(await response.text())
+            logger.info(response.text)
 
         else:
             payload = {
@@ -137,6 +138,7 @@ async def post_func(session, file, store_id):
                 },
             }
             # logger.debug(payload)
+            directory = get_directory(payload["row"]["LabebStoreId"])
             catalouge_v0 = v[0]["catalog_uuid"]
             catalouge_v1 = v[1]["catalog_uuid"]
             imgs_0 = encoded_images(directory, catalouge_v0)
@@ -151,35 +153,29 @@ async def post_func(session, file, store_id):
                 logger.error(e)
             # print(f"""row: {len(payload["row"]["images"])}""")
             # print(f"""nextRow: {len(payload["nextRow"]["images"])}""")
-            response = await session.post(
-                f"http://crawlerapi.labeb.com/api/PCCrawler/Crawl?StoreId={store_id}",
+            response = client.post(
+                f"""http://crawlerapi.labeb.com/api/PCCrawler/Crawl?StoreId={v[0]["LabebStoreId"]}""",
                 json=payload,
             )
             logger.debug(f"Posting to {response.url}")
             logger.debug(f"""row: {payload["row"]["externallink"]}""")
             logger.debug(f"""nextRow: {payload["nextRow"]["externallink"]}""")
-            logger.info(await response.text())
+            logger.info(response.text)
 
         logger.info("-" * 80)
 
 
-async def post_main():
+def post_main():
     try:
-        async with aiohttp.ClientSession(headers=headers) as session:
+        with httpx.Client(headers=headers, timeout=300) as client:
             logging.info(f"---starting new---")
-            post_tasks = []
             files = glob("*.csv")
             for file in files:
-                store_id = file.split("_")[0]
-                post_tasks.append(
-                    asyncio.create_task(post_func(session, file, store_id))
-                )
-            await asyncio.gather(*post_tasks)
+                post_func(client, file)
             logging.info(f"---finished---")
     except Exception as e:
         logger.error(e)
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(post_main())
+    post_main()

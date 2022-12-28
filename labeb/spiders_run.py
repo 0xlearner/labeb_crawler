@@ -5,6 +5,7 @@ from twisted.internet import reactor, defer
 from scrapy import spiderloader
 import sys
 import logging
+import os
 
 from labeb.spiders.carrefour_ksa import CarrefourKSA
 from labeb.spiders.carrefour_jordan import CarrefourJordan
@@ -21,7 +22,7 @@ from labeb.spiders.lulu_uae import LuluUae
 
 import asyncio
 
-from post_script import post_main
+from post_script_httpx import post_main
 
 
 def main():
@@ -40,10 +41,10 @@ def main():
         # for my_spider, spider_name in zip(classes, spiders):
         #     print(f"Running spider: {spider_name}")
         #     yield runner.crawl(my_spider)
-        print("Running spider CarrefourUAE")
-        yield runner.crawl(CarrefourUAE)
-        print("Running spider LuluUae")
-        yield runner.crawl(LuluUae)
+        # print("Running spider CarrefourUAE")
+        yield runner.crawl(CarrefourKuwait)
+        # print("Running spider LuluUae")
+        yield runner.crawl(LuluKuwait)
         reactor.stop()
 
     crawl()
@@ -52,5 +53,7 @@ def main():
 
 if __name__ == "__main__":
     main()
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(post_main())
+    os.remove("raw_labeb_items.csv")
+    os.remove("dev_labeb_items.csv")
+    os.remove("final_labeb_items.csv")
+    post_main()

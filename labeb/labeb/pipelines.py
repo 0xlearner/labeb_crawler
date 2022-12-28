@@ -41,6 +41,77 @@ def dedup_csv_header(fname, fname_new):
     fnew.close()
 
 
+class LabebCsvPipeline(object):
+    @classmethod
+    def from_crawler(cls, crawler):
+        pipeline = cls()
+        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
+        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
+        return pipeline
+
+    def spider_opened(self, spider):
+        self.file = open("raw_labeb_items.csv", "ab")
+        self.exporter = CsvItemExporter(self.file, encoding="utf-8-sig")
+        self.exporter.fields_to_export = [
+            "LabebStoreId",
+            "catalog_uuid",
+            "lang",
+            "cat_0_name",
+            "cat_1_name",
+            "cat_2_name",
+            "cat_3_name",
+            "catalogname",
+            "description",
+            "properties",
+            "price",
+            "price_before_discount",
+            "externallink",
+            "Rating",
+            "delivery",
+            "discount",
+            "instock",
+        ]
+        self.exporter.start_exporting()
+
+    def process_item(self, item, spider):
+        self.exporter.export_item(item)
+        return item
+
+    def spider_closed(self, spider):
+        self.exporter.finish_exporting()
+        self.file.close()
+
+        dedup_csv_header("raw_labeb_items.csv", "dev_labeb_items.csv")
+        try:
+            df = pd.read_csv("dev_labeb_items.csv")
+            sort_df = df.sort_values(by=["catalog_uuid"])
+            pd.concat(
+                [
+                    store.groupby("catalog_uuid", as_index=False)
+                    .agg(list)
+                    .reset_index(drop=True)
+                    for _id, store in sort_df.groupby("LabebStoreId")
+                ]
+            ).sort_index().reset_index(drop=True).apply(pd.Series.explode).to_csv(
+                "final_labeb_items.csv", index=False
+            )
+
+            with open(
+                "final_labeb_items.csv", "r", encoding="utf-8-sig"
+            ) as inputfile, open(
+                "output.csv", "w", newline="", encoding="utf-8-sig"
+            ) as outputfile:
+                csv_in = csv.reader(inputfile)
+                csv_out = csv.writer(outputfile)
+                title = next(csv_in)
+                csv_out.writerow(title)
+                for row in csv_in:
+                    if row != title:
+                        csv_out.writerow(row)
+        except pd.errors.EmptyDataError:
+            spider.log("CSV pipeline No columns to parse from file", logging.ERROR)
+
+
 class CarrefourKsaImagesPipeline(ImagesPipeline):
     def get_media_requests(self, item, info):
         urls = ItemAdapter(item).get(self.images_urls_field, [])
@@ -55,81 +126,6 @@ class CarrefourKsaImagesPipeline(ImagesPipeline):
         if ".jpg" not in file_name:
             img_name = file_name + ".jpg"
         return item["path"] + img_name
-
-
-class CarrefourKsaCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class CarrefourKsaExcelPipeline(object):
@@ -216,82 +212,6 @@ class CarrefourUaeImagesPipeline(ImagesPipeline):
         return item["path"] + img_name
 
 
-class CarrefourUaeCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
-
-
 class CarrefourUaeExcelPipeline(object):
     def __init__(self):
         self.files = {}
@@ -374,82 +294,6 @@ class CarrefourQatarImagesPipeline(ImagesPipeline):
         if ".jpg" not in file_name:
             img_name = file_name + ".jpg"
         return item["path"] + img_name
-
-
-class CarrefourQatarCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class CarrefourQatarExcelPipeline(object):
@@ -536,82 +380,6 @@ class CarrefourKuwaitImagePipeline(ImagesPipeline):
         return item["path"] + img_name
 
 
-class CarrefourKuwaitCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
-
-
 class CarrefourKuwaitExcelPipeline(object):
     def __init__(self):
         self.files = {}
@@ -694,82 +462,6 @@ class CarrefourJordanImagesPipeline(ImagesPipeline):
         if ".jpg" not in file_name:
             img_name = file_name + ".jpg"
         return item["path"] + img_name
-
-
-class CarrefourJordanCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class CarrefourJordanExcelPipeline(object):
@@ -856,82 +548,6 @@ class LuluUaeImagesPipeline(ImagesPipeline):
         return item["path"] + img_name
 
 
-class LuluUaeCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
-
-
 class LuluUaeExcelPipeline(object):
     def __init__(self):
         self.files = {}
@@ -1014,82 +630,6 @@ class LuluKsaImagesPipeline(ImagesPipeline):
         if ".jpg" not in file_name:
             img_name = file_name + ".jpg"
         return item["path"] + img_name
-
-
-class LuluKsaCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluKsaExcelPipeline(object):
@@ -1176,82 +716,6 @@ class LuluKuwaitImagesPipeline(ImagesPipeline):
         return item["path"] + img_name
 
 
-class LuluKuwaitCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
-
-
 class LuluKuwaitExcelPipeline(object):
     def __init__(self):
         self.files = {}
@@ -1334,82 +798,6 @@ class LuluOmanImagesPipeline(ImagesPipeline):
         if ".jpg" not in file_name:
             img_name = file_name + ".jpg"
         return item["path"] + img_name
-
-
-class LuluOmanCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluOmanExcelPipeline(object):
@@ -1496,82 +884,6 @@ class LuluQatarImagesPipeline(ImagesPipeline):
         return item["path"] + img_name
 
 
-class LuluQatarCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
-
-
 class LuluQatarExcelPipeline(object):
     def __init__(self):
         self.files = {}
@@ -1656,82 +968,6 @@ class LuluBahrainImagesPipeline(ImagesPipeline):
         return item["path"] + img_name
 
 
-class LuluBahrainCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
-
-
 class LuluBahrainExcelPipeline(object):
     def __init__(self):
         self.files = {}
@@ -1814,82 +1050,6 @@ class LuluEgyptImagesPipeline(ImagesPipeline):
         if ".jpg" not in file_name:
             img_name = file_name + ".jpg"
         return item["path"] + img_name
-
-
-class LuluEgyptCsvPipeline(object):
-    def __init__(self):
-        self.files = {}
-
-    @classmethod
-    def from_crawler(cls, crawler):
-        pipeline = cls()
-        crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-        crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        return pipeline
-
-    def spider_opened(self, spider):
-        # self.file = open("%s-items.csv" % spider.name, "ab", newline="")
-        self.items = []
-        self.colnames = []
-
-    def process_item(self, item, spider):
-        # add the new fields
-        for f in item.keys():
-            if f not in self.colnames:
-                self.colnames.append(f)
-
-        # add the item itself to the list
-        self.items.append(item)
-        return item
-
-    def spider_closed(self, spider):
-        items_csv = os.path.isfile("%s_items.csv" % spider.name)
-        with open("%s_items.csv" % spider.name, "a", encoding="utf-8-sig") as csv_file:
-            writer = csv.DictWriter(csv_file, fieldnames=self.colnames)
-
-            if not items_csv:
-                writer.writeheader()
-
-            for item in self.items:
-                writer.writerow(item)
-            with open(
-                "%s_items.csv" % spider.name, "r", encoding="utf-8-sig"
-            ) as duplicate_csv, open(
-                "%s_items_raw.csv" % spider.name, "w", encoding="utf-8-sig"
-            ) as out_file:
-                seen = set()
-                for line in duplicate_csv:
-                    if line in seen:
-                        continue
-
-                    seen.add(line)
-                    out_file.write(line)
-        os.remove("%s_items.csv" % spider.name)
-
-        try:
-            df = pd.read_csv("%s_items_raw.csv" % spider.name, skiprows=0)
-            drop_cols = df.drop(["image_urls", "path", "images"], axis=1)
-            drop_dup = drop_cols.drop_duplicates(subset=["externallink"])
-            sorted_df = drop_dup.sort_values(by=["catalog_uuid"])
-            output_path = "%s_items_final.csv" % spider.name
-            if not os.path.isfile(output_path):
-                sorted_df.to_csv("%s_items_final.csv" % spider.name, index=False)
-            else:
-                sorted_df.to_csv(
-                    "%s_items_final.csv" % spider.name,
-                    mode="a",
-                    encoding="utf-8-sig",
-                    header=False,
-                    index=False,
-                )
-            dedup = pd.read_csv("%s_items_final.csv" % spider.name, skiprows=0)
-            final_data = dedup.drop_duplicates()
-            final_data.to_csv("%s_items_final.csv" % spider.name, index=False)
-
-            os.remove("%s_items_raw.csv" % spider.name)
-        except pd.errors.EmptyDataError:
-            spider.log("Csv pipeline No columns to parse from file", logging.ERROR)
-            os.remove("%s_items_raw.csv" % spider.name)
 
 
 class LuluEgyptExcelPipeline(object):

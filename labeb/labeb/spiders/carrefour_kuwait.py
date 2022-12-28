@@ -12,7 +12,7 @@ class CarrefourKuwait(scrapy.Spider):
         "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.CarrefourKuwaitImagePipeline": 1,
-            "labeb.pipelines.CarrefourKuwaitCsvPipeline": 300,
+            "labeb.pipelines.LabebCsvPipeline": 300,
             "labeb.pipelines.CarrefourKuwaitExcelPipeline": 345,
         },
     }

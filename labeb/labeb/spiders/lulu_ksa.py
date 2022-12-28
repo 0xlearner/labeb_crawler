@@ -10,7 +10,7 @@ class LuluKsa(scrapy.Spider):
         "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.LuluKsaImagesPipeline": 1,
-            "labeb.pipelines.LuluKsaCsvPipeline": 300,
+            "labeb.pipelines.LabebCsvPipeline": 300,
             "labeb.pipelines.LuluKsaExcelPipeline": 345,
         },
     }

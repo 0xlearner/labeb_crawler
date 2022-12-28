@@ -10,7 +10,7 @@ class LuluBahrain(scrapy.Spider):
         "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.LuluBahrainImagesPipeline": 1,
-            "labeb.pipelines.LuluBahrainCsvPipeline": 300,
+            "labeb.pipelines.LabebCsvPipeline": 300,
             "labeb.pipelines.LuluBahrainExcelPipeline": 345,
         },
     }

@@ -12,7 +12,7 @@ class CarrefourQatar(scrapy.Spider):
         "IMAGES_STORE": "carrefour-qatar-images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.CarrefourQatarImagesPipeline": 1,
-            "labeb.pipelines.CarrefourQatarCsvPipeline": 300,
+            "labeb.pipelines.LabebCsvPipeline": 300,
             "labeb.pipelines.CarrefourQatarExcelPipeline": 345,
         },
     }

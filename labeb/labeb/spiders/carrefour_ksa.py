@@ -10,7 +10,7 @@ class CarrefourKSA(scrapy.Spider):
         "IMAGES_STORE": f"{name}_images",
         "ITEM_PIPELINES": {
             "labeb.pipelines.CarrefourKsaImagesPipeline": 1,
-            "labeb.pipelines.CarrefourKsaCsvPipeline": 300,
+            "labeb.pipelines.LabebCsvPipeline": 300,
             "labeb.pipelines.CarrefourKsaExcelPipeline": 345,
         },
     }
